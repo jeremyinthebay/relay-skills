@@ -41,21 +41,52 @@ cd "$REPO" 2>/dev/null || { log "repo missing"; exit 1; }
 # ---- 1. Production health -------------------------------------------------
 # NEVER `echo "$BODY" | grep`. zsh's echo mangles escape sequences in the page's inline JS,
 # truncating the very body we're inspecting. Grep the stream directly.
-CODE=$(curl -s -m 20 -o /dev/null -w "%{http_code}" https://example.com/ 2>/dev/null)
-PAUSED=no
-curl -s -m 20 https://example.com/ 2>/dev/null | grep -qi "usage limits\|site was paused\|Site not available" && PAUSED=yes
+# VERIFY OUR OWN CONTENT IS PRESENT. Do not try to recognise the failure page.
+#
+# BUG (audit #6): this grepped prod HTML for "usage limits|site was paused|Site not available".
+# Nobody had ever SEEN a real Netlify paused page to check those strings. If the wording
+# differed at all, PAUSED=no and CODE=200 → the else branch CLEARED the halt and the loop
+# kept building into a paused account. The detector for the one incident that already cost
+# four hours was an untested string match that DEFAULTED TO HEALTHY.
+#
+# You cannot enumerate every way a page can be wrong. You CAN state what right looks like.
+# So: assert our own content is served. Anything else — paused page, error page, parked
+# domain, DNS hijack, empty 200 — fails the same way, and fails CLOSED.
+#
+# This is the "never verify with a status code, grep the body" rule, applied to ourselves.
+BODY=$(curl -s -m 20 --compressed "https://example.com/?cb=$RANDOM" 2>/dev/null)
+CODE=$(curl -s -m 20 -o /dev/null -w "%{http_code}" "https://example.com/?cb=$RANDOM" 2>/dev/null)
 
-if [ "$PAUSED" = "yes" ]; then
-  alert prod_paused "🔴 Netlify PAUSED the site (usage limits). Relay halted so it stops burning builds. Needs your account."
-  touch "$RELAY/.halt"
-elif [ "$CODE" != "200" ]; then
+# The canary: markers that only OUR page has. If these are gone, the site is not ours.
+HEALTHY=no
+printf '%s' "$BODY" | grep -q "Points &amp; Prompts\|Points & Prompts" && \
+printf '%s' "$BODY" | grep -q "progGrid" && HEALTHY=yes
+
+if [ "$CODE" != "200" ]; then
   alert prod_down "🔴 example.com is DOWN (HTTP $CODE). Relay halted."
-  touch "$RELAY/.halt"
+  echo prod > "$RELAY/.halt"
+elif [ "$HEALTHY" != "yes" ]; then
+  # 200, but it is NOT our site. Paused page, error page, whatever — we don't need to know.
+  SNIP=$(printf '%s' "$BODY" | tr -d '\n' | cut -c1-140)
+  alert prod_paused "🔴 example.com returns 200 but is NOT SERVING OUR SITE (paused? parked? broken deploy?). Relay halted so it stops burning builds.
+First bytes: $SNIP"
+  echo prod > "$RELAY/.halt"
 else
   clear_alert prod_down; clear_alert prod_paused
-  # Clear the AUTO halt only. NEVER touch .stop — that is the human kill switch and it is
-  # permanent until a human removes it. The old code deleted the kill switch within 60s.
-  rm -f "$RELAY/.halt"
+  # Clear ONLY the halt I set myself, and ONLY the one caused by prod being unhealthy.
+  #
+  # BUG (audit #3): this was `rm -f "$RELAY/.halt"` — unconditional, every healthy poll.
+  # But `.halt` is ALSO how watch.sh stops the loop for its retry cap, its daily build
+  # budget, and its 90-minute stuck-lock detector. watch.sh runs the watchdog FIRST and
+  # checks .halt second — so every one of those halts was erased before it could be read.
+  # This is the exact "the watchdog deleted the kill switch" bug we already fixed for
+  # .stop, re-shipped one file over, against three other kill switches.
+  #
+  # A halt now carries a reason. I may only clear my own.
+  if [ -f "$RELAY/.halt" ] && grep -qx "prod" "$RELAY/.halt" 2>/dev/null; then
+    rm -f "$RELAY/.halt"
+    log "prod recovered — clearing my own halt"
+  fi
 fi
 
 # ---- 2. Is the executor running? Validate the lock, don't trust it. --------
@@ -89,7 +120,10 @@ else
         PREV=$(curl -s -m 20 -o /dev/null -w "%{http_code}" "https://deploy-preview-$OPENPR--myproject.netlify.app/" 2>/dev/null)
         if [ "$PREV" != "200" ]; then
           alert stuck_nopreview "⚠️ PR #$OPENPR open ${AGE_MIN}m, preview returns $PREV — no build. Relay can't review it."
-        else
+        elif [ "$(cat "$REPO/.automerge" 2>/dev/null)" = "on" ]; then
+          # Only a STALL if the loop was supposed to merge it. With auto-merge off, a PR
+          # waiting on a human IS the designed end state — alerting on it every hour trains
+          # the owner to ignore this channel, which is where the REAL halts arrive.
           alert stuck_unmerged "⚠️ PR #$OPENPR open ${AGE_MIN}m, preview up, nothing building, not merged. Reviewer may be stalled."
         fi
       fi

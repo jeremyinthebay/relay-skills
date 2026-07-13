@@ -71,8 +71,26 @@ Every one was paid for. None were obvious in advance.
 **27. A proxy metric that has never been reconciled against the real thing is a guess with a number on it.**
 *Cost:* our "daily build budget" counted *agent invocations*, not host builds. One task is several pushes (a preview build each) plus a production build on merge — so a ceiling of 20 was really 40–80+. **Nothing in the system had ever queried the host's actual usage.** The budget protecting us from the incident that took production down had never been checked against the thing it measures.
 
-**28. A mechanism you haven't tested in YOUR configuration is a rumour.**
-*Cost (avoided):* `PreToolUse` hooks look like the perfect mechanical gate for destructive commands — a model can't talk its way out of a hook, but it can talk its way out of a paragraph. Except [claude-code#20946](https://github.com/anthropics/claude-code/issues/20946) reports, with a repro, that under `--dangerously-skip-permissions` **hooks fire but don't block synchronously** — 9 denials, 5 commits landed anyway. That's exactly the mode an autonomous loop runs in. **The docs say hooks block. A reproduced security-labelled bug says otherwise.** Test it in your own config before you trust your safety to it.
+**28. A mechanism you haven't tested in YOUR configuration is a rumour — and so is a bug report.**
+`PreToolUse` hooks are the perfect mechanical gate for destructive commands: a model can talk its way past a paragraph, but not past a hook. Except [claude-code#20946](https://github.com/anthropics/claude-code/issues/20946) reports, with a repro, that under `--dangerously-skip-permissions` **hooks fire but don't block** — 9 denials, 5 commits landed anyway. That's exactly the mode an autonomous loop runs in.
+
+**So we tested it. On Claude Code 2.1.197 the bug does NOT reproduce — hooks block properly.**
+
+```
+CONTROL (no hook):  agent ran the command, file created   ← proves the harness works
+WITH HOOK:          blocked, nothing written
+REAL COMMAND:       git reset --hard HEAD~1  →  BLOCKED, commit survived
+HARMLESS GIT:       git status, git log      →  still allowed
+```
+
+**Install a hook. It is a mechanism; `CLAUDE.md` is a request.** Keep both — an instruction-level refusal stops the tool call from ever being *emitted*, so it's immune to any hook-dispatch bug. Re-test after every upgrade.
+
+*And a warning from the test itself:* the first attempt used `timeout`, which doesn't exist on stock macOS. The agent never ran, no file appeared, and the verdict logic read "no file" as "the hook blocked it." **A test that never ran, reporting success.** Always include a control run that proves the harness executes.
+
+**29. Don't try to recognise failure. Assert success.**
+*Cost:* our paused-host detector grepped production HTML for `usage limits|site was paused|Site not available`. **Nobody had ever seen a real paused page to check those strings.** If the wording differed at all: no match, HTTP 200, watchdog **clears its own halt**, loop keeps building into a paused account. The detector for the one incident that had already cost four hours defaulted to "healthy."
+
+Enumerating failure modes is unbounded and you will miss one. **Asserting the presence of what you expect is bounded, and it fails closed.** It now checks that our own title and a known DOM id are being served. Paused page, parked domain, broken deploy, empty 200 — all fail identically, all fail closed.
 
 ## The twin of rule 8
 
