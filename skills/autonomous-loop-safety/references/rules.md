@@ -107,6 +107,42 @@ Enumerating failure modes is unbounded and you will miss one. **Asserting the pr
 
 And when you add that guard: make it **wait**, not **halt**. An open PR is the system's normal resting state, not a failure. Halting on it turns "waiting for review" into an outage that needs a human to clear a flag. (I got this wrong on the first attempt.)
 
+**32. If a surface can drift silently, something must watch for the drift.** Our lessons live in three places (a private doc, a public writeup, a public repo). The doc auto-updated; the public ones needed a human. Nobody noticed the public record sat **seven rules behind** for hours. **A stale record is a record that lies** — and a system built to stop lying about its own state shouldn't lie about its own history. Check parity every run; treat a gap as a bug, not a chore.
+
+**33. Your automation's browser tab is HIDDEN. Animations do not run in it.**
+
+This one fabricated an entire production incident, and it is the single most expensive mistake in this document.
+
+```
+document.visibilityState  ->  "hidden"
+document.hasFocus()       ->  false
+```
+
+**`requestAnimationFrame` is throttled to ZERO in a background tab.** Anything animated silently never moves. And `scroll-behavior: smooth` — which most modern sites set — animates via rAF.
+
+So `location.hash`, `scrollIntoView()`, `scrollTo({behavior:'smooth'})`, **and even a real trusted mouse click on an anchor link** all report *no movement*, on a page that works perfectly for a human.
+
+I concluded "the whole site cannot be scrolled," closed a good PR, wrote an alarming brief, burned three builds, and told the owner production was broken. **A five-second check on his phone proved it worked fine.**
+
+**The discriminator that would have saved all of it:**
+
+```js
+window.scrollTo({ top: 1000, behavior: 'instant' });  // bypasses rAF entirely
+// if INSTANT works and SMOOTH doesn't, your tab is hidden and your test is invalid
+```
+
+**Never conclude "the page can't scroll" without first proving an instant scroll also fails.**
+
+And the general form, which is bigger than scrolling: **know what your harness is structurally blind to.** Mine cannot observe motion — not because of a bug, but because of what it *is*. A test that cannot fail correctly is not a test.
+
+**34. When the executor pushes back on your verdict, doubt your tooling first.**
+Twice in one day the executor rejected a verdict and was **right both times** — once on an iframe sized after `src`, once on this. In both cases it had *read the code*; I had *trusted my harness*. It even refused to strip `scroll-behavior: smooth` to make my test pass, correctly calling that "a downgrade for real users to satisfy a test artifact."
+
+**An executor that refuses to patch a non-bug is doing its job.** Don't out-argue it. Out-test it — with a control.
+
+**35. Some things your automation cannot see. Ask a human. It costs five seconds.**
+Not as the durable solution — the point is automation — but when the harness is *structurally* blind (animation, visual layout, "does this feel right"), a human check is cheap, instant, and correct. Know which category you're in, and be explicit about what you need tested. An hour of an agent chasing a ghost is worth strictly less than one five-second look.
+
 ## The twin of rule 8
 
 **Noise must never drown the signal.** The inbox checker runs 96 times a day and posts *nothing* when there's no work — because a bot that says "nothing to do" 96 times a day is a bot you mute, and then you miss the one that mattered.
