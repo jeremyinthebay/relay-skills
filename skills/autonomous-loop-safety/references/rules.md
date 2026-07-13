@@ -143,8 +143,42 @@ Twice in one day the executor rejected a verdict and was **right both times** �
 **35. Some things your automation cannot see. Ask a human. It costs five seconds.**
 Not as the durable solution — the point is automation — but when the harness is *structurally* blind (animation, visual layout, "does this feel right"), a human check is cheap, instant, and correct. Know which category you're in, and be explicit about what you need tested. An hour of an agent chasing a ghost is worth strictly less than one five-second look.
 
+## 36. The human is not the message bus
+
+Our watchdog texted the owner and **nobody else**. So he'd get *"the executor isn't picking it up"* on his phone and have to relay it back to an agent to go look. **The human became the message bus for a system built specifically to avoid that.**
+
+An agent runs every five minutes. **A human should never be the first responder.** Alerts land in a log the agents read; an agent triages within one cycle, fixes what it safely can, and escalates with a *diagnosis* rather than a raw alarm. Only production-down and money-burning alerts page a human instantly.
+
+If your monitoring's only output is a text message to a person, you haven't built monitoring — **you've built a pager, and made the human the integration layer.**
+
+## 37. Fixing one of N paths is not fixing the bug
+
+Rule 36 was the policy. We implemented it in `watchdog.sh` and declared it done.
+
+**Four other scripts had their own copy of `alert()`, each paging the human directly.** The very next routine event texted him anyway. The policy was real; the *enforcement* existed in one of five places. We had fixed **the example we happened to be looking at.**
+
+The tell: we verified the policy by reading the code we'd just changed. The right test greps for every path that can still do the forbidden thing:
+
+```sh
+grep -rn "notify.sh" *.sh    # who can page a human? should be exactly ONE file
+```
+
+The fix isn't five careful edits — it's **collapsing five implementations into one front door** the others must call. A policy that lives in five places isn't a policy; it's a coincidence waiting to end. **Make the wrong thing structurally impossible, not merely discouraged.**
+
+## 38. "It's on" is a claim. The file on disk is the fact.
+
+We told the owner auto-merge was on. Twelve hours later a PR sat unmerged and he asked why. `ls .automerge` → **no such file.** It was never on. We had reasoned about turning it on, discussed it, and moved on — without the one line that creates the flag the reviewer reads.
+
+This is rule 1 (don't verify with a status code) and rule 12 (don't merge without clicking the button) aimed at *yourself*: **we reported an intention as an outcome.** The config file is not a formality; it **is** the setting.
+
+**Before you tell a human a switch is flipped, read the switch.**
+
 ## The twin of rule 8
 
 **Noise must never drown the signal.** The inbox checker runs 96 times a day and posts *nothing* when there's no work — because a bot that says "nothing to do" 96 times a day is a bot you mute, and then you miss the one that mattered.
 
 Alert on trouble. Stay quiet on routine. Both halves are the same rule.
+
+We later built a 10-minute heartbeat posting status to chat. It ran 42 times before the owner killed it: *"I trust the process is working, we have a watcher, and you'll alert me when I need to do work. So no more random status updates anywhere."*
+
+**A status update nobody asked for is a tax on attention.** The watchdog is what makes silence trustworthy — and once silence is trustworthy, **chattering to prove you're alive is just noise with good intentions.** An autonomous system's highest compliment is that you forgot it was running.
