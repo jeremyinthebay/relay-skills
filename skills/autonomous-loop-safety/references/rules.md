@@ -60,6 +60,20 @@ Every one was paid for. None were obvious in advance.
 
 **24. The rules apply to the person writing the rules.** I built the lock, documented it, forbade the reviewer from ignoring it — then wrote into the executor's tree mid-build myself, because I was "just making a quick edit."
 
+## From the first *scheduled* adversarial audit — which found 6 bugs, 3 of them re-shipped
+
+**25. When you fix a bug, grep every sibling file for the same pattern.** And if other agents need the same check, **give them the exact snippet — not a description.** A description gets reinvented, badly.
+*Cost:* the lock file is `PID TIMESTAMP tag`. `watch.sh` parsed it with `cut -d' ' -f1`. The reviewer still did `kill -0 "$(cat .lock)"` — passing all three fields to `kill`, which errors, which reads as *"not running."* **The reviewer's mutex was dead on every build, for hours.** Its "stop if the executor is running" rule never fired once. Two other agents were told to "check the lock" with no snippet at all — they'd have invented the same bug.
+
+**26. An alarm that can fire every minute is not an alarm.** Dedupe *every* alert path, not just the one you thought about.
+*Cost:* the watchdog throttled its alerts. The 60-second poller did not — and it's the one that alerts inside a loop. A persistent condition would have sent **~1,400 identical texts before midnight.** A phone you've silenced is a phone that misses the real halt.
+
+**27. A proxy metric that has never been reconciled against the real thing is a guess with a number on it.**
+*Cost:* our "daily build budget" counted *agent invocations*, not host builds. One task is several pushes (a preview build each) plus a production build on merge — so a ceiling of 20 was really 40–80+. **Nothing in the system had ever queried the host's actual usage.** The budget protecting us from the incident that took production down had never been checked against the thing it measures.
+
+**28. A mechanism you haven't tested in YOUR configuration is a rumour.**
+*Cost (avoided):* `PreToolUse` hooks look like the perfect mechanical gate for destructive commands — a model can't talk its way out of a hook, but it can talk its way out of a paragraph. Except [claude-code#20946](https://github.com/anthropics/claude-code/issues/20946) reports, with a repro, that under `--dangerously-skip-permissions` **hooks fire but don't block synchronously** — 9 denials, 5 commits landed anyway. That's exactly the mode an autonomous loop runs in. **The docs say hooks block. A reproduced security-labelled bug says otherwise.** Test it in your own config before you trust your safety to it.
+
 ## The twin of rule 8
 
 **Noise must never drown the signal.** The inbox checker runs 96 times a day and posts *nothing* when there's no work — because a bot that says "nothing to do" 96 times a day is a bot you mute, and then you miss the one that mattered.

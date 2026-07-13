@@ -20,7 +20,9 @@ This matters because **an agent checking its own work grades its own homework.**
 
 ### 2. The part that keeps it from destroying things
 
-No loop skill I could find has any of this, and every piece of it exists because something broke:
+Other loop skills **name** these failure modes. [`everything-claude-code`](https://skills.sh/affaan-m/everything-claude-code) even has a Failure Modes section that calls out *"cost drift from unbounded escalation."* **None of them ship the mechanism** — no watchdog, no backups, no kill switch, no reconciled budget.
+
+Every row below exists because something actually broke:
 
 | | |
 |---|---|
