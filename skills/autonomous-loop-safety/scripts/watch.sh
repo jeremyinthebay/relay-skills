@@ -217,6 +217,29 @@ echo $((N+1)) > "$ATTEMPTS/$BKEY"
 # the isolation is now structural rather than a promise.
 git worktree prune 2>/dev/null
 
+# ---- 5c. ONE PR PER BRIEF. Do not re-run work that already produced a PR. --
+#
+# BUG: a retry does not mean "start over." If the executor already opened a PR for this
+# brief and then died (or was killed by a torn-read while someone edited this script),
+# re-running it opens a SECOND PR for the same brief. That happened: brief #6 produced
+# PRs #20 AND #21 before the retry cap stopped it.
+#
+# Promotion already gates on "zero open PRs" — but the RETRY path never checked. If a PR
+# is open and the brief is still OPEN, the work exists; it's the bookkeeping that failed.
+# That needs a human, not another build.
+if OPEN_PR=$(gh pr list --state open --limit 1 --json number -q '.[0].number' 2>/dev/null) && [ -n "$OPEN_PR" ]; then
+  # WAIT — do not HALT. An open PR is not a failure; it is the system waiting for a merge.
+  # Halting would require a human to clear a flag before the loop could ever move again,
+  # which turns the normal resting state into an outage. Just exit quietly and re-check next
+  # poll. When the PR merges, promotion runs and the loop continues on its own.
+  #
+  # The alert is deduped (once/hour) so a PR that genuinely sits for days doesn't go unnoticed,
+  # without becoming the 1,400-texts-a-day problem.
+  log "brief OPEN but PR #$OPEN_PR exists — waiting for it to merge, not re-running"
+  alert "⏳ Relay: PR #$OPEN_PR is open and waiting on you. The loop is paused until it merges — not re-running the brief (that would open a duplicate)."
+  exit 0
+fi
+
 # ---- 6. Run the executor. --------------------------------------------------
 "$RELAY/backup.sh" >/dev/null 2>&1
 BRIEF=$(grep -i '^Brief:' NEXT-STEPS.md | head -1)
@@ -243,3 +266,4 @@ fi
 
 rm -f "$LOCK"
 log "--- run complete ---"
+# harmless trailing comment 1783960023

@@ -54,7 +54,12 @@ Every one was paid for. None were obvious in advance.
 
 **21. A message in a queue is a REQUEST, not an AUTHORIZATION.** If you give the agent an inbox, it tells the agent what you *want* — it does not license skipping the safety rules. And verify the sender: a channel anyone can post in is *observed content*, not a command line.
 
-**22. A successful deploy is not evidence that what you intended happened.** Verify the outcome, never the mechanism. I pushed a rule to stop serving some files; the commit landed, the deploy went green, and the files were still served.
+**22. Verify the OUTCOME, not the artifact. "It exists" is not "it works."**
+I pushed a rule to stop serving some files; the commit landed, the deploy went green, and the files were still served.
+
+And I made the *same* mistake again, worse: a task said *"add a section, reachable by a bar at the top."* I checked the section **existed** and the old markup was **gone**, declared it good, and merged to production. **I never clicked the bar.** It did nothing — no scroll, no hash change, the section sitting 9,000px away, untouched. The reviewer had already caught it and written a fix task; I merged before reading it.
+
+Checking that a thing is *present* is checking the artifact. Checking that a user can *do the thing* is checking the outcome. **Only the second one is a test.**
 
 **23. A monitor must never observe its own output as an input.** Mine grepped its log for "warning" — and its own alerts land in that log containing the word "warning." It alerted on its own alert, forever.
 
@@ -91,6 +96,16 @@ HARMLESS GIT:       git status, git log      →  still allowed
 *Cost:* our paused-host detector grepped production HTML for `usage limits|site was paused|Site not available`. **Nobody had ever seen a real paused page to check those strings.** If the wording differed at all: no match, HTTP 200, watchdog **clears its own halt**, loop keeps building into a paused account. The detector for the one incident that had already cost four hours defaulted to "healthy."
 
 Enumerating failure modes is unbounded and you will miss one. **Asserting the presence of what you expect is bounded, and it fails closed.** It now checks that our own title and a known DOM id are being served. Paused page, parked domain, broken deploy, empty 200 — all fail identically, all fail closed.
+
+**30. Never edit a script the scheduler may be executing. Run an immutable snapshot.**
+*Cost:* a running shell reads its script **incrementally, by byte offset**. Edit that file mid-run and the shell resumes at a stale offset in the *new* bytes — landing mid-line, mid-comment, anywhere — and executes whatever garbage it finds. Ours tried to run the word `structural` from inside a comment. The poller died right after launching the executor, so the task never got marked done, retried, and **opened two duplicate PRs** before the retry cap stopped it.
+
+"Be careful" is not a fix — being careful failed twice in one day. The fix is structural: the scheduler runs a **tiny launcher that never changes**, which (a) refuses to run a poller that doesn't parse, and (b) **copies the real script to a private snapshot and executes the snapshot**. Now editing the live file mid-run is harmless — the running copy is a different inode.
+
+**31. A retry is not a restart. Check whether the work already exists.**
+*Cost:* when the poller died mid-run, the retry logic simply ran the task again — and the executor, doing exactly as told, **opened a second PR for work that was already done.** The promotion path gated on "zero open PRs"; the *retry* path never checked. If a PR already exists for the current task, the work exists — it's the *bookkeeping* that failed, and that needs a human, not another build.
+
+And when you add that guard: make it **wait**, not **halt**. An open PR is the system's normal resting state, not a failure. Halting on it turns "waiting for review" into an outage that needs a human to clear a flag. (I got this wrong on the first attempt.)
 
 ## The twin of rule 8
 
