@@ -57,8 +57,10 @@ The loop described here ran in production. It also:
 | **`autonomous-loop-safety`** | The rules. Watchdogs, kill switches, cost ceilings, retry caps, backups, and the failure modes that silently destroy work or money. **Read this one even if you use none of the rest.** |
 | **`agent-preflight`** | Forcing every permission dialog and environment assumption to surface *now*, in front of a human — instead of at 3am when the loop stalls silently. |
 | **`adversarial-audit`** | Pointing a fresh, skeptical agent at your system to find the bugs before your users do. Ours found ten in six minutes, after days of a human finding them one at a time. |
+| **`destructive-git-hook`** | A `PreToolUse` hook that **mechanically** blocks `reset --hard`, `push --force`, `branch -D`. A model can talk its way past a paragraph in `CLAUDE.md` — one did, on the only copy of a finished feature. It cannot talk its way past a hook. **Includes a tested answer to whether hooks actually block under `--dangerously-skip-permissions`: they do.** |
+| **`production-canary`** | After every merge, prove production still works — and **`git revert` it automatically if it doesn't.** This is what makes auto-merge survivable: a loop that can undo itself in 60 seconds can afford to move fast. |
 
-Install all four, or cherry-pick:
+Install all six, or cherry-pick:
 
 ```sh
 npx skills add jeremyinthebay/relay-skills
