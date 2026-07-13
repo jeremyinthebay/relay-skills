@@ -59,8 +59,9 @@ The loop described here ran in production. It also:
 | **`adversarial-audit`** | Pointing a fresh, skeptical agent at your system to find the bugs before your users do. Ours found ten in six minutes, after days of a human finding them one at a time. |
 | **`destructive-git-hook`** | A `PreToolUse` hook that **mechanically** blocks `reset --hard`, `push --force`, `branch -D`. A model can talk its way past a paragraph in `CLAUDE.md` — one did, on the only copy of a finished feature. It cannot talk its way past a hook. **Includes a tested answer to whether hooks actually block under `--dangerously-skip-permissions`: they do.** |
 | **`production-canary`** | After every merge, prove production still works — and **`git revert` it automatically if it doesn't.** This is what makes auto-merge survivable: a loop that can undo itself in 60 seconds can afford to move fast. |
+| **`mobile-verification`** | Test what a page actually **does** on a phone — real taps, real scrolling, real animations. Most automation tabs are **hidden**, so `requestAnimationFrame` never ticks and *smooth scrolling silently never moves* — which made us report a production outage that did not exist. Playwright is not blind. |
 
-Install all six, or cherry-pick:
+Install all seven, or cherry-pick:
 
 ```sh
 npx skills add jeremyinthebay/relay-skills
