@@ -1,23 +1,49 @@
 # Relay Skills — running an AI agent unattended, without losing your work
 
-[![skills.sh](https://skills.sh/b/jeremyinthebay/relay-skills)](https://skills.sh/jeremyinthebay/relay-skills)
-
 ```sh
 npx skills add jeremyinthebay/relay-skills
 ```
 
-Four skills for building an **autonomous agent loop**: one agent plans and reviews, another executes, and neither can ship alone.
+## There are already good skills for running an agent in a loop. This is not one of them.
 
-This isn't a "best practices" collection. **It's a list of the twenty-four ways an unattended agent loop actually broke, and the code that stops each one.**
+If you want an autonomous loop, **install [`ralph-wiggum`](https://skills.sh/fstandhartinger/ralph-wiggum/ralph-wiggum) or [`ralph-tui`](https://skills.sh/subsy/ralph-tui/ralph-tui-prd)** — feed an agent a task list, let it work through the items, commit what passes, retry what fails. They're mature, they're simpler than this, and the loop itself was not invented here.
+
+**This is what you install after that loop has hurt you.**
+
+Two things here that the others don't have:
+
+### 1. A second agent that can veto the first
+
+The executor **commits but never merges.** The reviewer **merges but never commits.** Neither ships alone, and the reviewer verifies the result **independently, in a real browser** — it never takes the executor's word.
+
+This matters because **an agent checking its own work grades its own homework.** On our first run the executor's test came back perfectly clean — while measuring elements inside a `display:none` container. A single-agent loop ships that false green and tells you it's done. Ralph is single-agent and self-verifying by design (*"you have full autonomy, don't wait for approval"*), which is exactly where this bites.
+
+### 2. The part that keeps it from destroying things
+
+No loop skill I could find has any of this, and every piece of it exists because something broke:
+
+| | |
+|---|---|
+| **A watchdog** | The loop went silent for four hours and looked exactly like a quiet successful night. A stall, a dead host and a finished run all produce the same output: nothing. |
+| **A cost ceiling** | 49 pushes in one day, most of them the loop's own bookkeeping, each triggering a full deploy. The build quota ran out. **The host paused the site — production was down for four hours,** and the previews died with it, so the review loop deadlocked too. Ralph's error handling is *"retry with exponential backoff,"* which is precisely the behavior that did this. |
+| **Backups against your own robot** | GitHub covers *pushed* commits. Not the 40 minutes of uncommitted work in the tree. Not a `reset --hard` before a push. **The threat model isn't "GitHub vanishes" — it's "my automation deletes my work."** |
+| **A destructive-git refusal** | A task once instructed `git reset --hard` on the only copy of a finished feature, with a confident explanation attached. A human hit Deny. That was the entire safety system. Now the executor refuses, even when told. |
+| **A kill switch that actually works** | Ours didn't. The watchdog deleted it within 60 seconds. |
+
+**They're better at the loop. This is better at surviving it.**
+
+---
+
+## What it cost to learn this
 
 The loop described here ran in production. It also:
 
 - took the site down for **four hours** by exhausting a build quota nobody was watching
 - **deadlocked twice**, permanently, in ways that survived the original problem being fixed
-- shipped a watchdog that was broken *in exactly the way it was written to prevent* — 259 errors into a log nothing read
-- came **one click away from `git reset --hard`** on the only copy of a finished feature, with a confident explanation attached
+- shipped a watchdog broken *in exactly the way it was written to prevent* — 259 errors into a log nothing read
+- came **one click away from `git reset --hard`** on the only copy of a finished feature
 
-Every rule in here cost something. Copy the architecture; skip the tuition.
+**Every rule here is scar tissue.** Copy the architecture; skip the tuition.
 
 ---
 
@@ -81,23 +107,14 @@ That trade was taken deliberately, on a low-stakes repo with no secrets in it. *
 
 ---
 
-## Prior art, and what's actually new here
+## Install these alongside it — they're better than what we built
 
-**The autonomous loop itself is not a new idea.** There's an established family of these — the *"ralph loop"* ([`fstandhartinger/ralph-wiggum`](https://skills.sh/fstandhartinger/ralph-wiggum/ralph-wiggum), [`subsy/ralph-tui`](https://skills.sh/subsy/ralph-tui/ralph-tui-prd), [`andrelandgraf/fullstackrecipes`](https://skills.sh/andrelandgraf/fullstackrecipes/ralph-loop)) — feed an agent a task list, let it work through the items, commit what passes, retry what fails. If you just want a loop, start there; they're simpler than this.
+Not politeness. Two of these solve problems we solved *worse*:
 
-**Two things here are different, and they're the only reasons to prefer this:**
-
-1. **The two-agent review split.** The executor commits but never merges; the reviewer merges but never commits; and the reviewer **independently verifies in a real browser** rather than trusting the executor's report. An agent checking its own work grades its own homework — this is the structural fix for that.
-
-2. **The safety layer**, which is most of what's here. The watchdog, the cost ceiling, the retry cap, the kill switch, the backups, the destructive-git refusal, and the 24 failure modes that produced them. **This is the part that was expensive to learn.**
-
-## Skills you should install alongside this
-
-Genuinely — some of these would have saved us:
-
-- **[`obra/superpowers`](https://skills.sh/obra/superpowers/using-git-worktrees)** → `using-git-worktrees`. **Install this.** Two agents sharing one git working tree is the bug that nearly destroyed a finished feature here. Worktrees are the clean, off-the-shelf answer, and we reinvented a worse one (a lockfile and a rule) because we didn't look first.
-- `obra/superpowers` → `verification-before-completion`, `systematic-debugging`, `requesting-code-review`
-- **[`vercel-labs/skills`](https://skills.sh/vercel-labs/skills/find-skills)** → `find-skills`. Lets an agent discover skills mid-session — the meta-fix for *"I didn't know that existed."*
+- **[`obra/superpowers`](https://skills.sh/obra/superpowers/using-git-worktrees) → `using-git-worktrees`.** Two agents sharing one git working tree is the bug that nearly destroyed a finished feature here. Worktrees are the clean, standard answer — **and we reinvented a worse one** (a lockfile plus a rule politely asking the reviewer to behave) because we never checked whether the problem was already solved.
+- **`obra/superpowers` → `verification-before-completion`.** States our core rule better than we did: *"No completion claims without fresh verification evidence... claiming work is complete without verification is dishonesty, not efficiency."*
+- **[`ralph-wiggum`](https://skills.sh/fstandhartinger/ralph-wiggum/ralph-wiggum)** — its specs carry a **Completion Signal**: an explicit checklist that makes "done" machine-checkable instead of a judgment call. Our early tasks said things like *"make it responsive,"* which is a vibe, not a finish line — and we got exactly what we asked for.
+- **[`vercel-labs/skills`](https://skills.sh/vercel-labs/skills/find-skills) → `find-skills`.** Lets an agent discover skills mid-session. The meta-fix for *"I didn't know that existed"* — which is how we ended up rebuilding worktrees badly.
 
 ```sh
 npx skills add obra/superpowers
