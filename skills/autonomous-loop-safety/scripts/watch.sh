@@ -53,17 +53,13 @@ touch "$RELAY/.alive"
 #
 # An alarm that fires 1,400 times is not an alarm, it's a reason to turn your phone off — and
 # then you miss the real one. Same message = once per hour, max.
+# Route through the ONE front door (alert.sh). Do not call notify.sh from here — that is how
+# "PR #23 is waiting on you" ended up as a 2am text for a state that is completely routine.
+# Default severity is normal (Slack + agent, NO text). Pass "urgent" only if the owner must act NOW.
 alert() {
-  local msg="$*"
-  local key=$(printf '%s' "$msg" | shasum | cut -c1-12)
-  local stamp="$RELAY/.alerted/$key"
-  mkdir -p "$RELAY/.alerted"
-  if [ -f "$stamp" ] && [ $(( $(date +%s) - $(stat -f %m "$stamp") )) -lt 3600 ]; then
-    return 0                      # already told them within the hour
-  fi
-  date +%s > "$stamp"
-  printf '%s\n' "$msg" >> "$RELAY/outbox.txt"
-  "$RELAY/notify.sh"
+  local sev="normal"
+  if [ "$1" = "urgent" ]; then sev="urgent"; shift; fi
+  "$RELAY/alert.sh" "$sev" "$*"
 }
 
 # ---- 0. MANUAL STOP. Permanent. Nothing auto-clears this. -------------------
@@ -74,11 +70,20 @@ if [ -f "$RELAY/.stop" ]; then
 fi
 
 # Drain any pending alert.
-[ -s "$REPO/.outbox.txt" ] || [ -s "$RELAY/outbox.txt" ] && "$RELAY/notify.sh"
+# The reviewer agent writes its verdicts to $REPO/.outbox.txt (it can reach the repo, not the relay
+# dir). Those are ROUTINE — "PR merged, all good" is not a reason to buzz someone's pocket. Route
+# them through the front door at normal severity: Slack + the agent queue, no text.
+if [ -s "$REPO/.outbox.txt" ]; then
+  "$RELAY/alert.sh" normal "$(cat "$REPO/.outbox.txt")"
+  : > "$REPO/.outbox.txt"
+fi
+# Drain anything genuinely urgent that alert.sh queued for the pager.
+[ -s "$RELAY/outbox.txt" ] && "$RELAY/notify.sh"
 
 "$RELAY/heal.sh"
 
 # ---- 1. Watchdog: notice trouble and SAY SO. Silence used to look like health.
+"$RELAY/canary.sh"   # prove PROD still works after any merge; revert if not
 "$RELAY/watchdog.sh"
 [ -f "$RELAY/.halt" ] && exit 0
 
@@ -100,7 +105,7 @@ if [ -e "$LOCK" ]; then
   rm -f "$LOCK"
 fi
 
-cd "$REPO" || { log "ERROR: repo missing"; alert "🔴 Relay: repo missing at $REPO"; exit 1; }
+cd "$REPO" || { log "ERROR: repo missing"; alert urgent "🔴 Relay: repo missing at $REPO"; exit 1; }
 
 # ---- 3. Queue promotion — VERIFY, THEN RECORD. -----------------------------
 if [ ! -f NEXT-STEPS.md ] || [ "$(brief_status NEXT-STEPS.md)" = "DONE" ]; then
@@ -171,7 +176,7 @@ BKEY=$(grep -i -m1 '^Brief:' NEXT-STEPS.md | sed 's/[^0-9a-zA-Z]/_/g' | cut -c1-
 N=$(cat "$ATTEMPTS/$BKEY" 2>/dev/null || echo 0)
 if [ "$N" -ge 3 ]; then
   log "brief $BKEY has failed $N times — HALTING"
-  alert "⛔ Relay HALTED: the current brief failed 3 times. Not retrying. Needs you."
+  alert urgent "⛔ Relay HALTED: the current brief failed 3 times. Not retrying. Needs you."
   echo retry-cap > "$RELAY/.halt"
   exit 0
 fi
@@ -199,12 +204,28 @@ done
 BUILD_CEILING=25
 if [ "$BUILDS_TODAY" -ge "$BUILD_CEILING" ]; then
   log "daily build budget reached ($BUILDS_TODAY real builds) — HALTING"
-  alert "⛔ Relay HALTED: $BUILDS_TODAY Netlify builds today (ceiling $BUILD_CEILING). Netlify paused us once already — not risking it again."
+  alert urgent "⛔ Relay HALTED: $BUILDS_TODAY Netlify builds today (ceiling $BUILD_CEILING). Netlify paused us once already — not risking it again."
   echo build-budget > "$RELAY/.halt"
   exit 0
 fi
 echo "$(date '+%Y-%m-%d') $BUILDS_TODAY" > "$BUDGET"
-echo $((N+1)) > "$ATTEMPTS/$BKEY"
+
+# NOTE: the attempt counter is NOT incremented here. It used to be, and that HALTED THE LOOP on
+# 2026-07-13 for a brief that had not failed even once.
+#
+# THE BUG: this line sat ABOVE section 5c (the open-PR gate). Brief #7 ran once, succeeded, and
+# opened PR #23 — correctly leaving the brief OPEN, because CLAUDE.md tells the executor to. The
+# next two polls never invoked Code at all: they hit 5c, logged "waiting for it to merge," and
+# exited. But they had already bumped the counter on the way past. 1 -> 2 -> 3, and the third poll
+# tripped the retry cap: "⛔ the current brief failed 3 times." It had failed zero times. Three
+# minutes of a healthy, waiting system read as a runaway, and the loop stopped for the night.
+#
+# AN ATTEMPT THAT NEVER INVOKED THE EXECUTOR IS NOT AN ATTEMPT. A retry cap must count retries,
+# not polls — otherwise the loop's normal resting state (a PR open, awaiting review) burns the
+# budget it was given to survive genuine failures.
+#
+# The increment now lives in section 6, immediately before `claude -p`, next to the lock. If we
+# didn't run it, we don't count it.
 
 # ---- 5b. Prune stale worktrees. -------------------------------------------
 # The executor now works in an isolated worktree (via the using-git-worktrees skill), so
@@ -228,22 +249,46 @@ git worktree prune 2>/dev/null
 # is open and the brief is still OPEN, the work exists; it's the bookkeeping that failed.
 # That needs a human, not another build.
 if OPEN_PR=$(gh pr list --state open --limit 1 --json number -q '.[0].number' 2>/dev/null) && [ -n "$OPEN_PR" ]; then
-  # WAIT — do not HALT. An open PR is not a failure; it is the system waiting for a merge.
-  # Halting would require a human to clear a flag before the loop could ever move again,
-  # which turns the normal resting state into an outage. Just exit quietly and re-check next
-  # poll. When the PR merges, promotion runs and the loop continues on its own.
+  # ESCAPE HATCH: a brief may explicitly TARGET the open PR.
   #
-  # The alert is deduped (once/hour) so a PR that genuinely sits for days doesn't go unnoticed,
-  # without becoming the 1,400-texts-a-day problem.
-  log "brief OPEN but PR #$OPEN_PR exists — waiting for it to merge, not re-running"
-  alert "⏳ Relay: PR #$OPEN_PR is open and waiting on you. The loop is paused until it merges — not re-running the brief (that would open a duplicate)."
-  exit 0
+  # THE DEADLOCK THIS FIXES (2026-07-13): PR #23 passed review but could not merge — its branch had
+  # gone stale against main and git reported CONFLICTING. The fix was one push to the PR's branch,
+  # which only the executor can do. So the reviewer wrote a brief telling Code to do exactly that…
+  # and this gate refused to invoke Code, because a PR was open. The brief that existed to repair
+  # PR #23 was blocked BY PR #23. Nothing could move it, and clearing .halt only made the poller
+  # spin and re-halt. A human had to reach in and fix the branch by hand.
+  #
+  # A gate whose only exit is the thing it is blocking is a deadlock, not a safety property.
+  #
+  # So: if the brief header names the open PR, it is a repair brief — let it through. The duplicate-
+  # PR risk this gate exists to prevent doesn't apply: a repair brief pushes to the EXISTING branch,
+  # it doesn't open a second PR. Ordinary briefs (no Target-PR line) are still blocked exactly as
+  # before, so the one-PR-in-flight guarantee is intact.
+  if grep -qiE "^Target-PR: *#?${OPEN_PR}([^0-9]|$)" NEXT-STEPS.md; then
+    log "brief explicitly targets open PR #$OPEN_PR (Target-PR header) — invoking Code to repair it"
+  else
+    # WAIT — do not HALT. An open PR is not a failure; it is the system waiting for a merge.
+    # Halting would require a human to clear a flag before the loop could ever move again,
+    # which turns the normal resting state into an outage. Just exit quietly and re-check next
+    # poll. When the PR merges, promotion runs and the loop continues on its own.
+    #
+    # The alert is deduped (once/hour) so a PR that genuinely sits for days doesn't go unnoticed,
+    # without becoming the 1,400-texts-a-day problem.
+    log "brief OPEN but PR #$OPEN_PR exists — waiting for it to merge, not re-running"
+    alert "⏳ Relay: PR #$OPEN_PR is open and waiting on you. The loop is paused until it merges — not re-running the brief (that would open a duplicate)."
+    exit 0
+  fi
 fi
 
 # ---- 6. Run the executor. --------------------------------------------------
 "$RELAY/backup.sh" >/dev/null 2>&1
 BRIEF=$(grep -i '^Brief:' NEXT-STEPS.md | head -1)
 echo "$$ $(date +%s) claude-relay" > "$LOCK"
+
+# COUNT THE ATTEMPT HERE — at the point we actually make one, not on every poll.
+# Everything above this line can exit without invoking Code (open PR, stale lock, halt, budget).
+# None of those are attempts, and counting them is what falsely halted the loop on 2026-07-13.
+echo $((N+1)) > "$ATTEMPTS/$BKEY"
 log "OPEN brief (attempt $((N+1))/3) — $BRIEF — invoking Claude Code"
 
 claude -p "check next" --dangerously-skip-permissions >> "$LOG" 2>&1
@@ -257,7 +302,7 @@ else
   # This branch used to do NOTHING. The poller would relaunch the identical build 60s later.
   log "WARNING: brief still OPEN after run (attempt $((N+1))/3)"
   if [ $((N+1)) -ge 3 ]; then
-    alert "⛔ Relay: brief failed 3 times, halting. Check COWORK-STATUS.md."
+    alert urgent "⛔ Relay: brief failed 3 times, halting. Check COWORK-STATUS.md."
     echo retry-cap > "$RELAY/.halt"
   else
     alert "⚠️ Relay: brief didn't complete (attempt $((N+1))/3). Will retry."

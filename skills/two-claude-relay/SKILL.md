@@ -71,6 +71,42 @@ The short version:
 - **Expect to be wrong.** Briefs are guesses until they run. On the very first brief, the executor pushed back on three points and was right on all three — it had read the code and I hadn't. Tell it explicitly: *push back when the brief is wrong; your status file is ground truth over my assumptions.*
 - **Don't put two decisions in one brief.** I once said "add click-to-expand" and "keep the three view modes" in the same brief, without asking whether three view modes earned their space on a phone. They didn't. The executor built exactly what I asked for, and the result was bad. That was a planning failure, not an execution one.
 
+## Keep the paperwork off the feature branch
+
+This one cost us two stranded PRs and a night of downtime, and it is the least obvious rule here.
+
+The two protocol files (`NEXT-STEPS.md`, `COWORK-STATUS.md`) are **bookkeeping**. If the executor commits them to its feature branch, you get this:
+
+1. Executor branches off main and starts a 30-minute build.
+2. Main moves while it works — a doc edit, the next task getting promoted, anything.
+3. Executor finishes, commits its work **and the paperwork**, opens a PR.
+4. **The PR won't merge.** Both sides rewrote the same status file. Git says `CONFLICTING` — while the actual product code conflicts with *nothing*.
+
+Two PRs in a row died this way. And it deadlocks: the fix is a push to the branch, only the executor can push, and the "one PR in flight" gate refuses to invoke the executor while a PR is open.
+
+**So: feature branches carry product code ONLY. The protocol files are committed straight to main, in their own commit.**
+
+```
+# the work — on the branch, product only
+git add index.html && git commit -m "Task #N: what shipped"
+git push -u origin task-N && gh pr create ...
+
+# the paperwork — on main, separately, never on the branch
+cd <primary tree>        # NOT the worktree: git refuses to check out main twice
+git pull --ff-only
+git add NEXT-STEPS.md COWORK-STATUS.md
+git commit -m "Task #N: status — Verification: PASS (PR #n)"
+git push origin main
+```
+
+**The executor still never merges.** It commits paperwork to main; it never pushes product code there, and never runs `gh pr merge`. The division of authority is untouched — that is the whole safety model and this doesn't dent it.
+
+The reviewer then reads the report from `git show origin/main:COWORK-STATUS.md` — **not** from the PR diff, where it is now correctly absent.
+
+If your host rebuilds on every push, exclude markdown from the build trigger or this gets expensive. Ours (Netlify) skips the build unless a *served* file changed, so paperwork commits cost nothing — verify that before adopting this.
+
+`tests/commit-split.test.sh` replays the exact scenario under both protocols and proves the conflict class is gone. Its third case is the one that matters: **two branches genuinely editing the same product line must STILL conflict.** Removing a class of false conflicts must never remove your ability to see a real one.
+
 ## What this is not good for
 
 - **Anything you'd be upset to lose.** The executor runs with `--dangerously-skip-permissions`, because a headless agent can't answer a permission prompt. That means unattended shell with push access, scoped to a folder but *not sandboxed*.

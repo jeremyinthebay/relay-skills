@@ -182,3 +182,48 @@ Alert on trouble. Stay quiet on routine. Both halves are the same rule.
 We later built a 10-minute heartbeat posting status to chat. It ran 42 times before the owner killed it: *"I trust the process is working, we have a watcher, and you'll alert me when I need to do work. So no more random status updates anywhere."*
 
 **A status update nobody asked for is a tax on attention.** The watchdog is what makes silence trustworthy — and once silence is trustworthy, **chattering to prove you're alive is just noise with good intentions.** An autonomous system's highest compliment is that you forgot it was running.
+
+---
+
+## The guardrails that turned on us (learned the hard way, in one day)
+
+### A guardrail that fires when nothing is wrong is broken
+
+The retry cap halted the loop for a task that had not failed once. The counter was incremented on every *poll*, above the check that decides whether the executor is invoked at all. Two polls that never ran anything took it from 1 to 3.
+
+**Count attempts where you make them.** The increment belongs immediately before the invocation, nowhere else.
+
+**Cost:** a night of autonomy, and a halt message that blamed work which had already succeeded.
+
+### A gate whose only exit is the thing it blocks is a deadlock
+
+"Never invoke the executor while a PR is open" (prevents duplicate PRs) met "this PR needs one push from the executor to become mergeable." The repair task was blocked by the thing it repaired. A human had to break it.
+
+**Every blocking gate needs an escape hatch for the state that repairs it.** Ours: `Target-PR: #N` in the task header, honoured for exactly that PR.
+
+**Cost:** a deadlock that survived clearing the kill switch.
+
+### Misfire vs policy — know which one you're looking at
+
+- **Guardrail misfiring** → a bug. Fix it, prove it with a test *and a control*, report it. Do not ask.
+- **Guardrail's policy should change** (ceilings, merge bars, force-push) → a judgment call. Ask.
+
+Collapsing these makes an agent that pesters a human about bugs and quietly rewrites policy. Both directions are wrong.
+
+**Cost:** the owner: *"it's keeping me more in the loop and asking me too many questions vs actually being autonomous."*
+
+### A control that passes for the wrong reason is a false pass
+
+The control "a FAIL verdict must be refused" went green — because the fixture had no git remote, so the gate refused before ever reading the verdict. Broken verdict logic would have looked identical.
+
+**Assert on the reason, not just the outcome.** Print *why* the check refused, and read it.
+
+And its mirror: don't grep prose for the word "FAIL". A healthy report says *"the control run failed all 3 checks"* — which is a control doing its job. Read one machine-readable header line instead.
+
+**Cost:** caught in the same hour, but only because the suite was re-run and read.
+
+### Paperwork conflicts; product code doesn't
+
+Bookkeeping files committed on feature branches conflict every time main moves. Product code rarely does. Commit the paperwork straight to main in its own commit; keep branches product-only.
+
+**Cost:** two stranded PRs, one deadlock, one manual rescue.

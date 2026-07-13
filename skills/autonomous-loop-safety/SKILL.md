@@ -103,6 +103,63 @@ Emit liveness **directly** — touch a beacon file every poll, before any early 
 
 **The system didn't need better instrumentation. It needed to be forced to read the instrumentation it already had.** Make the watchdog read its own stderr and the executor's warnings, and alert on both.
 
+## When the guardrail itself is the bug
+
+Everything above is about building guardrails. This section is about the day they turn on you — which they will, and which nobody warns you about.
+
+### A guardrail that fires when nothing is wrong is not "safe". It is broken.
+
+Our retry cap halted the loop for a task that **had not failed even once.**
+
+The executor ran, succeeded, opened a PR, and correctly left the task OPEN — the reviewer decides when work is done, not the executor. The next two polls never invoked the executor at all: they saw the open PR, logged *"waiting for it to merge"*, and exited. But the counter was incremented **above** that check, on the way past.
+
+```
+poll 1  executor runs, opens PR      attempts = 1
+poll 2  never runs it (PR is open)   attempts = 2   <-- counted anyway
+poll 3  never runs it (PR is open)   attempts = 3   <-- counted anyway
+poll 4  "task failed 3 times" -> HALT
+```
+
+**An attempt that never invoked the executor is not an attempt.** Count the thing you are capping, at the moment you actually do it — in `scripts/watch.sh`, the increment sits immediately above the `claude -p` call and nowhere else.
+
+Leaving a misfiring guardrail alone *feels* cautious. It isn't. It converts a healthy system into a halted one **and then blames the work.**
+
+### A gate whose only exit is the thing it's blocking is a deadlock
+
+One rule said *never invoke the executor while a PR is open* — otherwise a retry opens a duplicate PR. Sound.
+
+Then a PR passed review but couldn't merge (stale branch, `CONFLICTING`). The fix was one push to that branch, and **only the executor can push.** So the reviewer wrote a task telling the executor to fix it — which the gate refused to run, because a PR was open. **The task that existed to repair the PR was blocked by the PR.** A human had to reach in.
+
+**Every blocking gate needs an escape hatch for the case that repairs the blocked state.** Ours: a task may declare `Target-PR: #24` in its header and the gate lets exactly that one through. Ordinary tasks stay blocked, so the duplicate-PR guarantee survives. It's ~6 lines in `scripts/watch.sh`, and `tests/watch-retry-cap.test.sh` proves both halves — the hatch opens for the named PR, and does **not** open for a different one.
+
+**When you write a gate, ask: what fixes the state this blocks, and can that thing still run?**
+
+### Which failures are yours to fix, and which are the human's to decide
+
+The owner, halfway through a long session: *"I feel like it's keeping me more in the loop and asking me too many questions vs actually being autonomous as possible."*
+
+The bug was a collapsed distinction:
+
+```
+guardrail is MISFIRING      -> a BUG.      Fix it. Prove it. Report it. Don't ask.
+guardrail's POLICY changes  -> a JUDGMENT. Raise the ceiling? Relax the merge bar?
+                                           Allow force-push? That is the human's call.
+```
+
+**Asking about a bug is not caution, it's abdication** — it hands a human a decision with only one correct answer, usually at 3am. Quietly changing a *policy* because it seemed sensible is the opposite failure. Autonomy is not "acts without asking"; it's **knowing which things it doesn't need to ask about.**
+
+The price of fixing your own guardrails is a high proof bar, and it is *yours* to meet: a test **and a control**, a backup first, the diff shown afterward.
+
+### A control that passes for the wrong reason is a false pass
+
+A test that has never failed cannot be trusted — but here's the sharper version.
+
+Writing the merge gate, I added the control: *"a report that says FAIL must be refused."* It refused. Green tick. **But it refused because the test fixture had no git remote** — the gate never read the verdict at all. Had the verdict logic been broken, that control would still have been green.
+
+**A control must fail for the reason you named, and pass for the reason you named.** Make it print *why* it refused, and read that — don't assert on the exit code alone.
+
+Its mirror image, same hour: my first instinct was to grep the status file for the word `FAIL`. That would have refused a **healthy** report — a good report says things like *"the control run against production failed all 3 checks, so we know the test can fail."* **Describing a control working correctly is not a failure.** `scripts/pr-gate.sh` reads exactly one machine-readable header line (`Verification: PASS|FAIL`) and never the prose.
+
 ## And one for the human
 
 **The rules apply to the person writing the rules.** I built the lock, documented it, forbade the reviewer from ignoring it — then wrote into the executor's tree mid-build myself, because I was "just making a quick edit." The lock caught me.
@@ -112,6 +169,10 @@ A guardrail only works if *everything* that touches the resource checks it. Incl
 ## Reference files
 
 - `references/destructive-git.md` — the executor-side refusal, ready to paste into `CLAUDE.md`
-- `references/rules.md` — all 24 rules, grouped, with what each one cost
+- `references/rules.md` — every rule, grouped, with what each one cost
+- `scripts/watch.sh` — the poller: retry cap that counts **invocations, not polls**, plus the `Target-PR` escape hatch
+- `scripts/pr-gate.sh` — the merge preconditions as **code**, not prose. Exit 0 pass / 2 legacy / 1 REFUSE. It is **necessary, not sufficient** — it never replaces the reviewer actually clicking the thing
+- `tests/watch-retry-cap.test.sh` — runs the real poller against a fake `$HOME` with stubbed `claude`/`gh`. 5 cases **and a control**: a task that genuinely fails 3 times must still halt. *A cap that can't stop a runaway is worse than no cap.*
+- `tests/pr-gate.test.sh` — 12 cases, including the control (a `FAIL` verdict is refused) and the false-refuse trap (a healthy report that says "the control run failed" must still pass)
 - `scripts/watchdog.sh` — alerts on stalls, host failure, its own stderr
 - `scripts/backup.sh` — bundle + worktree snapshots, verified by restore
