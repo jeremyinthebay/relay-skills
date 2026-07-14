@@ -42,17 +42,51 @@ Don't lecture an owner who has already reasoned about this. Engage the actual di
 Steps 1–2 let any single logo be upgraded later **without touching code**. Step 4 renders for most
 brands. Step 5 means a missing logo is never a broken image.
 
-**Step 3 matters more than it looks.** The proxy is a cache, and it is sometimes wrong or stale. In a
-real 39-brand run it returned a **generic globe** for one airline whose own domain served a perfectly
-good icon, and a 16px mush for a retailer whose own domain served a **scalable SVG**. Going direct is
-both higher quality and more faithful to the principle — the mark comes from the company itself.
+### ⚠️ Step 3 (DIRECT) usually FAILS. Read this before you use it — I shipped it and it broke.
+
+The idea is sound: the proxy is a cache, and it is sometimes wrong or stale. In a real 39-brand run it
+returned a **generic globe** for one airline, and a 16px mush for a retailer whose own domain served a
+**scalable SVG**. So: go straight to `https://<brand>/favicon.ico`. Better quality, and the mark comes
+from the company itself.
+
+**It does not work, and the reason is invisible to your tests.**
+
+```
+curl  https://www.evaair.com/favicon.ico   → 200, valid icon    ✅
+curl  https://www.costco.com/favicon.ico   → 200, valid SVG     ✅
+
+<img src="https://www.evaair.com/favicon.ico">  from another origin  → FAILS TO PAINT ❌
+<img src="https://www.costco.com/favicon.ico">  from another origin  → FAILS TO PAINT ❌
+```
+
+**Hotlink protection.** Those servers see a cross-origin `Referer` and refuse. **`curl` sends no
+Referer, so it sails straight through.** Every check you'd naturally run says the URL is fine. The
+browser says otherwise, silently, and your logo drops to a monogram.
+
+I verified those URLs with `curl`, shipped them, and two brands fell back to monograms in production.
+**A 200 is not a painted logo.**
+
+**If you use a DIRECT entry, verify it with an actual image load, from a different origin:**
+
+```js
+const test = src => new Promise(res => {
+  const i = new Image();
+  i.onload  = () => res({ src, ok: true, w: i.naturalWidth });
+  i.onerror = () => res({ src, ok: false });          // ← hotlink block lands here
+  i.src = src;
+  setTimeout(() => res({ src, ok: false, note: 'timeout' }), 8000);
+});
+```
+
+Run it **from a page on your own domain**, not from a file:// page and not from curl. Most brands
+will fail. Treat DIRECT as a rare exception you have *proven*, not a default.
 
 ```js
 const LOGO_DOMAIN = { united: "united.com", marriott: "marriott.com", /* … */ };
-const DIRECT = {
-  eva:    "https://www.evaair.com/favicon.ico",   // proxy returns a generic globe
-  costco: "https://www.costco.com/favicon.ico",   // brand publishes an SVG
-};
+// DIRECT: only for brands you have PROVEN paint via a real <img> load from your own origin.
+// Most brands hotlink-block and will silently fail here (see the warning above).
+// The two examples I originally shipped BOTH failed in production. Left empty on purpose.
+const DIRECT = {};
 const favicon = d => `https://www.google.com/s2/favicons?sz=64&domain=${d}`;
 
 function logoFallback(img, id, mono) {
@@ -98,6 +132,14 @@ Verify by counting what rendered, in a real browser:
 
 **Then look at them.** Build a contact sheet — every mark at real display size — screenshot it, and
 actually look. That is the only way to catch a logo that resolved to something that isn't the brand.
+
+## Monograms must be unique — check for collisions
+
+The fallback monogram is usually an airline/loyalty code. **Two brands can legitimately share one.**
+We shipped `BR` for both **EVA Air** (its IATA code) and **Bilt Rewards** — two unrelated brands
+rendering the same two letters, which is worse than no logo at all.
+
+Assert uniqueness across the whole map before you ship. It is three lines and it catches a real bug.
 
 ## Detect the generic globe — the silent wrong answer
 
