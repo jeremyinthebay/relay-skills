@@ -264,3 +264,31 @@ exactly that speed with a green tick on it. **Velocity is not validation. A pass
 fact-checker. A claim needs a source, not a green build.**
 
 **Cost:** four false claims on a live page; found by readers, not by us.
+
+### A staleness check must compare identity, not status
+
+A poller found its local task file marked `OPEN` while the remote copy read `DONE`. It concluded the
+obvious thing — *I'm behind* — checked the file out from the remote, and logged `refreshing`.
+
+It was not behind. It was **ahead.** It had promoted the *next* task locally; the agent that ran it
+crashed after pushing its branch but before pushing the paperwork. Local `OPEN` was task #14. Remote
+`DONE` was task #13. The recovery path never asked *which task* — only whether the other side said
+`DONE` — so it deleted a live task and reported the loop idle.
+
+`local=OPEN, remote=DONE` is **ambiguous**. It means either:
+
+- the remote is ahead — someone else finished this task (the case the check was written for), or
+- **the local is ahead** — a newer task exists that hasn't been pushed yet.
+
+Only the task's *identifier* separates those two, and status comparison throws it away. **A recovery
+path that cannot tell *behind* from *ahead* will eventually destroy the newer state — and it will do
+it while logging a reassuring word.** Compare identity (which task), then status (what state).
+
+A related trap in the same incident: the agent exited **non-zero because its network connection
+dropped mid-response**, not because the work failed. The branch and the pull request were already
+pushed. Every conclusion drawn afterward — "task didn't complete, will retry", "nothing has been
+building for 31 minutes" — was read off the *process*, while the *artifact* sat in plain sight.
+**An exit code measures the transport, not the work. Ask what shipped, not how the process died.**
+
+**Cost:** a completed task's brief and verification record erased; the loop reported idle while its
+pull request sat open and unreviewed.
