@@ -1,6 +1,6 @@
 ---
 name: autonomous-loop-safety
-description: The safety rules for any agent that runs unattended — watchdogs, kill switches, cost ceilings, retry caps, backups, and the failure modes that silently destroy work or money. Use this whenever an agent will run without a human watching: scheduled tasks, cron jobs, background loops, overnight builds, self-merging pipelines, or anything using --dangerously-skip-permissions. Also use when a loop has stalled, deadlocked, gone silent, burned through a quota, or when someone asks "how do I know it's still working" or "how do I stop it safely."
+description: The safety rules for any agent that runs unattended — watchdogs, kill switches, cost ceilings, retry caps, backups, and the failure modes that silently destroy work or money. Use this whenever an agent will run without a human watching — scheduled tasks, cron jobs, background loops, overnight builds, self-merging pipelines, or anything using --dangerously-skip-permissions. Also use when a loop has stalled, deadlocked, gone silent, burned through a quota, or when someone asks "how do I know it's still working" or "how do I stop it safely."
 ---
 
 # Autonomous Loop Safety
