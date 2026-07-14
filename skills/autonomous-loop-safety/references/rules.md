@@ -265,6 +265,50 @@ fact-checker. A claim needs a source, not a green build.**
 
 **Cost:** four false claims on a live page; found by readers, not by us.
 
+### "Unverifiable" is usually a fact about your tools, not about the world
+
+An audit checked a data set against the companies' own published pages. Three came back
+*"unverifiable — the page is JavaScript-rendered and the fetch returns an empty shell."* That went
+into the report, twice, and the audit moved on.
+
+Then a human asked: *"Can't you just open the browser?"*
+
+Of course it could. A browser **runs the JavaScript.** Two of the three pages gave up their data
+immediately, with no login — including the two most valuable facts in the audit: a partner that had
+been quietly dropped, and a ratio the site had been getting wrong for months. Straight from the
+company, in its own words.
+
+Worse, the constraint was **self-inflicted**: the research helpers had been told "no browser tools"
+for an unrelated reason (see the next rule) — and then their conclusion was *believed as a fact about
+the world.* It wasn't. It was an echo of our own restriction coming back wearing a lab coat.
+
+**Before you write "cannot be verified," name the tool that failed and ask what a different tool
+would see.** A fetch that returns a shell has not told you the page is empty; it has told you the
+fetch cannot execute JavaScript. Those are not the same sentence.
+
+**Cost:** two of the audit's most valuable findings nearly discarded as unknowable.
+
+### Never give an autonomous helper write access to a workspace a human is using
+
+Five draft replies sat in five browser tabs, waiting for a human to read and post them. Then a
+research agent was spawned with the standard toolset — which included browser control.
+
+It needed a page. It grabbed a tab. It navigated away, "restored the URL," and reported back
+politely. **Four of the five drafts were gone.**
+
+The agent did nothing wrong. *We* handed it write access to a surface a human was actively working
+in, then walked away. The tabs looked like the agent's workspace. They were the human's.
+
+Two rules fall out, and the second is the more important:
+
+- **Scope a subagent's tools to the job.** A research task needs to read the web. It does not need to
+  drive a browser holding a human's unsaved work.
+- **Unsaved work does not belong in a volatile surface.** Browser tabs are not storage. If it
+  matters, it goes in a file — then it survives the agent, the crash, and the accidental close.
+
+**Cost:** four drafts destroyed; and, via the restriction imposed in response, an audit that declared
+verifiable facts unverifiable.
+
 ### A staleness check must compare identity, not status
 
 A poller found its local task file marked `OPEN` while the remote copy read `DONE`. It concluded the
