@@ -227,3 +227,40 @@ And its mirror: don't grep prose for the word "FAIL". A healthy report says *"th
 Bookkeeping files committed on feature branches conflict every time main moves. Product code rarely does. Commit the paperwork straight to main in its own commit; keep branches product-only.
 
 **Cost:** two stranded PRs, one deadlock, one manual rescue.
+
+---
+
+## What the loop was never checking (2026-07-14)
+
+### If a missing fact renders as a plausible one, your data model is a lie generator
+
+Transfer ratios lived as an *optional suffix inside the partner's name string*: `"Aeroméxico ·1:1.6"` had
+one; `"Cathay"` and `"Emirates"` did not. A chip with no suffix rendered as just a name — which a reader
+takes to mean the ordinary ratio, **1:1**. An audit against the issuers' own pages found both are **5:4**.
+The *absence* of a fact was rendering, confidently, as a *different* fact.
+
+That is a shape bug, not a typo bug. **An optional field with a plausible default does not fail loudly when
+it's missing — it fabricates.** A blank would have been honest.
+
+The fix was not correcting the ratios. It was making the omission impossible: every partner became an object
+that must carry its ratio (`{p:"Cathay", r:"5:4"}`), and the renderer never defaults a missing one.
+
+**Correct the data and you fix today. Correct the model that permitted the gap and you fix every tomorrow.**
+
+**Cost:** wrong ratios in every currency, live, for the life of the page.
+
+### Your tests prove the page renders. They do not prove it's true.
+
+The uncomfortable half of the rule above: while that data was wrong in every currency, **the machine was
+entirely green.** Mobile matrix 20/20 at both widths in both themes. `node --check` clean. The production
+canary healthy after every deploy. No guardrail blinked.
+
+Every check we own verifies the *build* — that it parses, renders, doesn't overflow, doesn't 500. **Not one
+of them can tell whether a single word on the page is true.** The four wrong facts were caught by strangers
+on Reddit, after publication. That is not a detection mechanism; it is luck.
+
+An autonomous loop makes this sharper, not safer: it ships correct code fast, so a wrong fact propagates at
+exactly that speed with a green tick on it. **Velocity is not validation. A passing suite is not a
+fact-checker. A claim needs a source, not a green build.**
+
+**Cost:** four false claims on a live page; found by readers, not by us.
