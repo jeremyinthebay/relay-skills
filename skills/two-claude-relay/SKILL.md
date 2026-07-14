@@ -27,6 +27,14 @@ This is the safety model, not ceremony:
 
 Preserve this even when it feels bureaucratic. It's the only structural thing standing between a confident model and a broken production deploy at 2am.
 
+### Product-only PRs, and the one exception
+
+The loop's merge gate refuses any PR that isn't **product code only** — no build config, no dependency changes, no serverless functions. This is what stops the executor from quietly slipping infrastructure, auth, or config changes into a feature PR that a reviewer skims. Keep it strict.
+
+But a real project eventually needs an infrastructure change — a build step, a new function, a dependency bump. Do **not** weaken the gate to let it through, and do **not** let the loop auto-merge it. Route it through a **human out-of-band merge**: a person reviews the actual infra diff by hand and merges it directly, exactly as they'd hand-commit a `netlify.toml`. The autonomous loop keeps shipping product-only; the architecture change stays a human decision.
+
+The tell: when the gate refuses a PR **purely on file scope** — the diff is fine, the verdict is PASS, it's mergeable, the only objection is that it touches build/infra files the owner already accepted — that's not a bug to fix, it's the signal that this one belongs on the human path. A file-scope refusal on *unaccepted* files is the gate doing its job; refuse and send it back. Same mechanism, opposite response — so always look at *which* files before you act.
+
 ## The protocol: two files, not an API
 
 | File | Direction | Contents |

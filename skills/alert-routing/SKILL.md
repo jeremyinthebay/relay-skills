@@ -53,8 +53,12 @@ structurally impossible, not merely discouraged.**
 SEV="${1:-normal}"; shift
 MSG="$*"; [ -n "$MSG" ] || exit 0
 
-# Dedupe: same message, once an hour. An alert that fires every 60s is an alert you mute.
-KEY=$(printf '%s' "$MSG" | shasum | cut -c1-12)
+# Dedupe on the alert CLASS, not the exact bytes. "Fires every 60s = muted" is only true if the
+# throttle actually catches it — and a live "12m" age or an HTTP code baked into the message changes
+# the hash every tick and defeats the throttle entirely. We shipped exactly this: a watchdog put the
+# minute-count in the text and fired 78 identical "stuck PR" alerts in one hour, evicting the one
+# alert that mattered. Strip volatile digit runs BEFORE hashing so "open 12m" and "open 13m" collapse.
+KEY=$(printf '%s' "$MSG" | sed -E 's/[0-9]+/N/g' | shasum | cut -c1-12)
 STAMP="$STATE/$KEY"
 if [ -f "$STAMP" ] && [ $(( $(date +%s) - $(stat -f %m "$STAMP") )) -lt 3600 ]; then exit 0; fi
 date +%s > "$STAMP"
@@ -62,6 +66,13 @@ date +%s > "$STAMP"
 printf '[%s] [%s] %s\n' "$(date '+%F %T')" "$SEV" "$MSG" >> "$BASE/alerts.log"   # agents read this
 printf '%s\t%s\n' "$SEV" "$MSG" >> "$BASE/.chat-queue"                           # agent posts it
 printf '%s\n'     "$MSG"        >> "$BASE/.pending-alerts"                       # agent triages it
+
+# A queue nothing drains is a silent leak. If an agent is not GUARANTEED to drain these every cycle,
+# bound them (ring-buffer to the last N) and surface their depth where a human sees it. An undrained
+# backlog must never be invisible — "silence must not look like health" applies to your own plumbing.
+for f in "$BASE/.chat-queue" "$BASE/.pending-alerts"; do
+  [ -f "$f" ] && [ "$(wc -l < "$f")" -gt 500 ] && { tail -n 500 "$f" > "$f.tmp" && mv "$f.tmp" "$f"; }
+done
 
 [ "$SEV" = "urgent" ] && { printf '%s\n' "$MSG" >> "$BASE/outbox.txt"; "$BASE/notify.sh"; }
 exit 0
@@ -86,6 +97,17 @@ Stub the pager so it records instead of sending, fire both severities, assert th
 ```
 
 **Exactly one page.** If the routine one paged too, a caller is still bypassing the front door.
+
+Then fire the **same class twice with only a number changed** — assert it logs once:
+
+```sh
+./alert.sh normal "PR #7 open 12m, no build"     # logs
+./alert.sh normal "PR #7 open 13m, no build"     # must NOT log again — same class
+```
+
+If the second one logs, your dedup key still carries a volatile substring and the throttle is a
+no-op. A test that fires a class only *once* can never catch this — vary the number and watch. (This
+is the bug that flooded us; the test that would have caught it didn't exist until after.)
 
 ## The last mile: don't chatter either
 

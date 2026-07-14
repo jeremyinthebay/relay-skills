@@ -97,6 +97,14 @@ Keep two separate flags: one the *automation* manages (auto-clears when the cond
 
 Emit liveness **directly** — touch a beacon file every poll, before any early exit. Never infer it from side effects that fall silent exactly when the system is busiest. **A false alarm teaches you to ignore alerts, and then you ignore the real one.**
 
+**A throttle keyed on a volatile string is not a throttle.** Mine deduped alerts by hashing the whole message — but the message carried the PR's live age (`"open 78m"`), so every minute produced a new hash and the once-an-hour throttle never fired. One stuck PR sent 78 identical alerts in an hour and evicted the one that mattered from the heartbeat's last-three panel. Dedup on the alert *class*: strip the volatile parts (ages, counts, HTTP codes) before hashing.
+
+**A queue nothing drains is a silent leak.** Two alert sinks were appended every tick and drained by an agent that had been replaced months earlier. They grew unbounded and unread — and nothing errored, which is exactly why no one noticed. Bound them (ring-buffer to a last-N) and surface their depth where a human already looks. "Silence must never look like health" applies to your own plumbing, not just the product.
+
+**Retire a request only after the work is verified, never before.** The inbound handler filed each request as "handled" the instant it started, then only *logged* the exit code — so a failed run dropped the user's message silently. This is rule 3 (record state LAST) one directory over: archive on success, retain-and-retry on failure, dead-letter after N tries so a poison message can neither spin forever nor vanish.
+
+**The meta — a fix isn't a lesson until it's a tested invariant.** An adversarial audit found all three of the above in the alert layer, and every one was a lesson the core loop had *already* learned and written down. They regressed because the original fixes were point-patches with no test to catch a recurrence elsewhere. A lesson that lives only as a corrected line in one script is a coincidence in one location. Each of these now ships with a test that goes **red** against the old logic — that, not more care, is what makes a fix stick.
+
 ## The meta-rule
 
 **Every bug in this system was already visible in a file on the machine.** `stderr` had 259 unread errors — the watchdog itself throwing on every single poll, meaning the paused-host detector it existed for may never have been able to fire. The executor's log plainly stated its branch had reverted, hours before anyone noticed.
