@@ -336,3 +336,87 @@ building for 31 minutes" — was read off the *process*, while the *artifact* sa
 
 **Cost:** a completed task's brief and verification record erased; the loop reported idle while its
 pull request sat open and unreviewed.
+
+### A throttle keyed on a volatile string is not a throttle
+
+The alerter deduped by hashing the whole message — but the message carried the PR's live age
+(`"open 78m"`), so every minute produced a new hash and the once-an-hour throttle never fired.
+One stuck PR sent 78 identical alerts in an hour and evicted the one that mattered from the
+heartbeat's last-three panel. Dedup on the alert *class*: strip the volatile parts (ages, counts,
+HTTP codes) before hashing.
+
+**Cost:** 78 identical pages in an hour; the single alert that mattered, buried.
+
+### A queue nothing drains is a silent leak
+
+Two alert sinks were appended every tick and drained by an agent that had been replaced months
+earlier. They grew unbounded and unread — and nothing errored, which is exactly why no one
+noticed. Bound them (ring-buffer to a last-N) and surface their depth where a human already
+looks. "Silence must never look like health" applies to your own plumbing, not just the product.
+
+**Cost:** months of alerts written for no reader, discovered only by an adversarial audit.
+
+### Retire a request only after the work is verified, never before
+
+The inbound handler filed each request as "handled" the instant it started, then only *logged*
+the exit code — so a failed run dropped the user's message silently. This is "record state LAST"
+one directory over: archive on success, retain-and-retry on failure, dead-letter after N tries so
+a poison message can neither spin forever nor vanish.
+
+**Cost:** a user's request could disappear without a trace, while the log read as routine.
+
+### A fix isn't a lesson until it's a tested invariant
+
+An adversarial audit found all three of the above in the alert layer — and every one was a lesson
+the core loop had *already* learned and written down. They regressed because the original fixes
+were point-patches with no test to catch a recurrence elsewhere. A lesson that lives only as a
+corrected line in one script is a coincidence in one location. Each now ships with a test that
+goes **red** against the old logic — that, not more care, is what makes a fix stick.
+
+**Cost:** three solved failure classes, re-bought at full price in an adjacent subsystem.
+
+### A remediator must recognize its own artifacts
+
+The canary asserted production health with content markers written for the previous
+version of the site. A human rewrote the site overnight — legitimately, outside the
+loop. On the next poll every marker failed against a perfectly healthy page, so the
+canary did what it was built to do: blamed the newest commit, reverted it, pushed.
+The revert didn't clear the symptom — the symptom was never in a commit — so the next
+poll found the revert at HEAD and reverted *that*. Revert → Reapply ping-pong: eight
+cycles in fifteen minutes, one production build each, one page to the human each,
+against a site that was fine the whole time.
+
+The loop already owned a rule for this — *a monitor must never observe its own output
+as an input* — paid for once when a watchdog grepped its own alerts out of a shared
+log. It came back through a new channel: git. The canary consumed its own revert
+commits as fresh deploys to judge.
+
+The breaker: **if the thing you are about to revert is itself a revert you made, your
+diagnosis is wrong. Halt and page a human.** An automated remedy that did not change
+the symptom the first time will not change it the second time — repeating it is how
+one false alarm becomes an incident. More generally: any auto-remediation needs to
+check whether its last action changed the observed symptom before it is allowed to
+fire again.
+
+**Cost:** sixteen junk commits on main, eight wasted production builds, eight urgent
+pages to a human — all for a site that was never broken.
+
+### When every marker fails at once, suspect the marker set, not the world
+
+A marker set is a snapshot of what the site looked like on the day someone wrote it.
+The site is allowed to change; the snapshot doesn't know that. One marker failing is
+a regression. **All markers failing simultaneously on an HTTP 200 is a different
+signature: the site changed shape underneath your checks.** The monitor that treats
+those two patterns identically will one day declare a healthy redesign an outage —
+and if it is wired to auto-remediate, it will attack the redesign.
+
+Fail toward self-doubt: on all-markers-failed, halt, say "my markers are probably
+stale," and never take an automated action on evidence your own instrumentation may
+have invented. Two corollaries: markers should be structural — the app shell, the
+asset pipeline — never page copy, which churns with every redesign; and a redesign's
+definition of done includes updating the monitors that describe the site, proven by a
+self-test mode you can run before resuming the loop.
+
+**Cost:** same incident as the rule above — and the fix initially covered only one of
+the three scripts that carried the stale marker, which is the "fixing one of N paths"
+rule landing a second time, one file over from where it was coined.
