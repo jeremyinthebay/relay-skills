@@ -62,8 +62,12 @@ The loop described here ran in production. It also:
 | **`autonomous-loop-safety`** (updated) | Now also ships the guardrails that **turn on you**: a retry cap that counted polls instead of attempts and halted a loop that had failed zero times; a gate whose only exit was the thing it blocked (a deadlock a human had to break); and `pr-gate.sh` — the merge preconditions as **code**, with a test suite whose control proves it still refuses a failing PR. |
 | **`brand-logos-without-rehosting`** | Real company logos next to brand names — **without scraping or committing a single asset file**. Each mark resolves at runtime from the brand's own published favicon, with a self-hosted override and a monogram fallback. Includes the two traps: `loading="lazy"` silently kills the whole fallback chain (an offscreen image never loads, so `onerror` never fires), and the favicon endpoint **301s** so a `curl` without `-L` tells you every brand failed. Plus globe-detection: an unresolvable domain returns a *generic globe icon with HTTP 200*, which looks like a logo and isn't. |
 | **`mobile-verification`** | Test what a page actually **does** on a phone — real taps, real scrolling, real animations. Most automation tabs are **hidden**, so `requestAnimationFrame` never ticks and *smooth scrolling silently never moves* — which made us report a production outage that did not exist. Playwright is not blind. |
+| **`alert-routing`** | Route every alert through one front door so agents triage first and a human is only woken for real emergencies — not for every routine event an autonomous system notices. |
+| **`parallel-build-serialized-merge`** | Build N independent workstreams concurrently, then serialize the merge one verdict at a time through a single review gate — because only the merge has to be serial, not the build. Includes the newest-first caveat that will stall you if you verdict out of order. |
+| **`signed-in-web-verification`** | Verify auth-gated flows — signed-in sessions, multi-turn AI features, scroll-triggered UI — with a real Playwright browser holding a session **you** place by hand. The assistant never touches the token. Includes an adversarial poisoned-history variant. |
+| **`llm-feature-adversarial-audit`** | A checklist for auditing an LLM-backed feature specifically: client-controlled history that injects false facts, XSS on rendered model output (not just user input), cost/kill-switch adequacy under variable payload size, auth/metering bypass, and secret handling. |
 
-Install all seven, or cherry-pick:
+Install all eleven, or cherry-pick:
 
 ```sh
 npx skills add jeremyinthebay/relay-skills
@@ -127,6 +131,35 @@ Not politeness. Two of these solve problems we solved *worse*:
 npx skills add obra/superpowers
 npx skills add vercel-labs/skills
 ```
+
+## Installing manually (no `npx skills`)
+
+`npx skills add` (from [skills.sh](https://skills.sh)) is the easy path. If you'd rather not run
+that, or you're wiring these into a Claude Code plugin, each skill is just a directory with a
+`SKILL.md` — copy it wherever your tool reads skills from:
+
+**Into a personal/user skills directory:**
+
+```sh
+git clone https://github.com/jeremyinthebay/relay-skills.git
+cp -r relay-skills/skills/<skill-name> ~/.claude/skills/<skill-name>
+```
+
+**Into a project's skills directory** (so it's checked in and shared with collaborators):
+
+```sh
+cp -r relay-skills/skills/<skill-name> /path/to/your/project/.claude/skills/<skill-name>
+```
+
+**As part of a Claude Code plugin:** drop the skill directory under the plugin's `skills/`
+directory (same shape: `skills/<skill-name>/SKILL.md` plus its `scripts/`/`references/`) and
+reference it from the plugin manifest the same way as any other bundled skill.
+
+Each skill directory is self-contained — `SKILL.md` plus its own `scripts/` and/or `references/` —
+so copying just the one folder you want is always safe; nothing here depends on sibling skills
+being installed (skills that complement each other say so in prose, e.g.
+`signed-in-web-verification` pointing at `llm-feature-adversarial-audit`, but neither requires the
+other to function).
 
 ## Requirements
 
